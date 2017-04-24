@@ -1,0 +1,250 @@
+<html>
+<title>Explorations in Linux and AWS and .Net Core</title>
+<style>
+    body {
+        font-family: Verdana, Geneva, Tahoma, sans-serif;
+        color: black;
+        margin: 1em;
+    }
+
+    pre {
+        margin-left: 40px;
+        border: 1px solid black;
+        background-color: gray;
+        padding: 20px;
+    }
+
+    pre.filename {
+        margin-bottom: 5px;
+        border: 2px solid black;
+        background-color: gray;
+        font-weight: bold;
+        padding: 5px;
+    }
+</style>
+
+<body>
+    <h1>Explorations in Linux and AWS and .Net Core</h1>
+    <p>
+        In the last few weeks I've been spending a lot of time learning Amazon Web Service, Docker, DynamoDB, .Net Core and more.
+        I've decided to document my discoveries by means of a new blog site. Here's the plan:
+    </p>
+    <ul>
+        <li>Create a static web site hosted in S3, deployed using scripts</li>
+        <li>Develop all of this on Linux</li>
+        <li>Use new things for as much as possible and ignroe all my usual favourites like Visual Studio, SQL Server etc.</li>
+        <li>Incrementally add features until I have a standard looking blog site.
+    </ul>
+    <p>
+        Initially, this site is going to look pretty fugly.
+    </p>
+    <p>So, here we go :)</p>
+
+    <h2>Creating the dev machine</h2>
+    <p>
+        My home desktop machine died recently (faultly hard drive) so I decided to start with a clean slate and install Linux. Im
+        using the standard Ubuntu 16.10 LTS distro. I tried a few distro's like Mint and Budgie but my choices are constrained
+        by the platforms that .Net Core supports.
+    </p>
+    <p>
+        Installation of Ubuntu was complicated by my graphics card not being supported by the installers. This required the use of
+        the nomodeset parameter when installing and after the 1st reboot. Once I got past this, I was able to install the
+        correct NVidia drivers and get a nice looking desktop.
+    </p>
+    <p>
+        Next I installed a bunch of stuff. This couldn't be easier:
+        <ul>
+            <li><a href="https://www.microsoft.com/net/core#linuxubuntu" target="_blank">.Net Core 1.1 SDK</a></li>
+            <li><a href="https://code.visualstudio.com/download" target="_blank">Visual Studio Code</a></li>
+            <li>Git - sudo apt-get install git</li>
+            <li>AWS CLI - sudo apt-get install awscli</li>
+            <li>NodeJS and npm - sudo apt-get install nodejs npm</li>
+            <li><a href="https://www.terraform.io/downloads.html" target="_blank">Terraform</a></li>
+        </ul>
+        To install terraform, create a bin folder on your home directory then simply download the zip file and expand the single
+        file to this. Aleternatively you can install this to /usr/bin which will let all users find it in the path.
+    </p>
+    <p>
+        I also installed a bunch of extensions in Visual Studio Code:
+        <ul>
+            <li>C#</li>
+            <li>Docker</li>
+            <li>Python</li>
+            <li>Terraform</li>
+            <li>...</li>
+        </ul>
+    </p>
+
+    <h2>Setting up AWS</h2>
+    <p>I already had an AWS account for using free-tier resources while training myself. I want to resist creating anything
+        in the AWS console and use code and script as much as possible. However, I do need to use the console to create an
+        IAM account.
+    </p>
+    <img src="images/createiamuser.png" width=700 style="padding-left:50" />
+    <p>We only want this user to have progrmmatic access - no need for the console.</p>
+    <p>Next, set the permissions:</p>
+    <img src="images/permissions.png" width=700 style="padding-left:50" />
+    <p>I am only using S3 and Route53 for now. I'll add more permissions later if required.</p>
+    <p>Next, save the IAM credentials somewhere safe and setup these in a local configuration. There are several ways to do
+        this - I prefer to use a named profile rather than environment variables.I can use this profile with the AWS CLI
+        and Terraform:</p>
+    <img src="images/awsconfigure.png" width=500 style="padding-left:50" />
+    <p>And now I can test this works:</p>
+    <img src="images/s3ls.png" width=500 style="padding-left:50" />
+
+    <h2>Creating the S3 Static Site</h2>
+    <p>I will use <a href="https://www.terraform.io/downloads.html" target="_blank">Terraform</a> to create the S3 buckets for
+        the site. The site actually requires 3 buckets:
+        <ul>
+            <li>the main content bucket - all the html anmd images etc will live here. The DNS will point to this as jonesie.kiwi.
+                Logging is truned on for this so we need... </li>
+            <li>a bucket for logging hits on the site.</li>
+            <li>a bucket for old school users who still use www.jonesie.kiwi.</li>
+        </ul>
+        <p>There is a step by step walkthough <a href="http://docs.aws.amazon.com/AmazonS3/latest/dev/website-hosting-custom-domain-walkthrough.html">here</a>            that explains how to setup the buckets.</p>
+    </p>
+    <p> In case you don't know, Terraform is a pretty nifty tool for creating all(?) types of AWS resources. In my case, I just
+        need S3 buckets with the Web Site feature enabled and Route 53 (DNS) pointing to this. The Terraform script for this
+        looks like this:
+    </p>
+    <pre class="filename">resources.tf</pre>
+    <pre>
+provider "aws" {
+  region  = "${var.aws_region}"
+  profile = "${var.aws_profile}"
+}
+
+resource "aws_s3_bucket" "sitebucket" {
+  bucket = "${var.site_bucket_name}"
+  acl    = "public-read"
+
+  website {
+    index_document = "index.html"
+    error_document = "error.html"
+  }
+
+  logging {
+    target_bucket = "${aws_s3_bucket.sitebucket-log.id}"
+    target_prefix = "log/"
+    
+  }
+
+  policy = &lt;&lt;EOF
+{
+  "Version":"2012-10-17",
+  "Statement": [{
+    "Sid": "Allow Public Access to All Objects",
+    "Effect": "Allow",
+    "Principal": "*",
+    "Action": "s3:GetObject",
+    "Resource": "arn:aws:s3:::${var.site_bucket_name}/*"
+  }
+ ]
+}
+EOF
+}
+
+resource "aws_s3_bucket" "sitebucket-log" {
+  bucket = "logs.${var.site_bucket_name}"
+  acl    = "log-delivery-write"
+
+  lifecycle_rule {
+    id = "log"
+    prefix = "log/"
+    enabled = true
+
+    expiration {
+      days = 30
+    }
+  }
+}
+
+resource "aws_s3_bucket" "sitebucket-www" {
+  bucket = "www.${var.site_bucket_name}"
+  acl    = "public-read"
+  
+  website {
+    redirect_all_requests_to = "${var.site_bucket_name}"
+  }
+}
+
+data "aws_route53_zone" "zone" {
+  name = "${var.domain_name}"
+}
+
+resource "aws_route53_record" "siteroot" {
+  zone_id = "${data.aws_route53_zone.zone.zone_id}"
+  name    = "${var.domain_name}"
+  type    = "A"
+
+  alias {
+    name                   = "s3-website-${var.aws_region}.amazonaws.com."
+    zone_id                = "${aws_s3_bucket.sitebucket.hosted_zone_id}"
+    evaluate_target_health = false
+  }
+}
+
+resource "aws_route53_record" "sitewww" {
+  zone_id = "${data.aws_route53_zone.zone.zone_id}"
+  name    = "www.${var.domain_name}"
+  type    = "A"
+
+  alias {
+    name                   = "s3-website-${var.aws_region}.amazonaws.com."
+    zone_id                = "${aws_s3_bucket.sitebucket.hosted_zone_id}"
+    evaluate_target_health = false
+  }
+}
+
+
+    </pre>
+    <pre class="filename">variables.tf</pre>
+    <pre>
+variable "aws_profile" {}
+variable "aws_region" {}
+variable "site_bucket_name" {}
+    </pre>
+    <p>
+        I placed the above two files in a directory called aws. Then I created a shell script to apply this:
+    </p>
+    <pre class="filename">deploy.sh</pre>
+    <pre>
+#!/bin/bash
+
+echo Deploy static site to jonesie.kiwi
+
+aws_profile="jonesie-kiwi"
+aws_region="us-west-2"
+domain_name="jonesie.kiwi"
+site_bucket_name="jonesie.kiwi"
+site_bucket_url="http://$site_bucket_name.s3-website-$aws_region.amazonaws.com"
+
+# create the aws infrastructure
+terraform apply \
+    -var "aws_profile=$aws_profile" \
+    -var "aws_region=$aws_region" \
+    -var "domain_name=jonesie.kiwi" \
+    -var "site_bucket_name=$site_bucket_name" \
+    aws
+
+# copy the content to the bucket
+if [ $? -eq 0 ]
+then
+    aws s3 cp \
+        content/ s3://$site_bucket_name \
+        --profile $aws_profile \
+        --recursive 
+fi
+        </pre>
+    <p>
+        Now I can run the script, remembering to SUDO of course.
+    </p>
+    <h2>Updating the domain</h2>
+    <p>The final step is to update my domain registry with the AWS name server records. This is a manual step as I cant script this.</p>
+
+<h2>Next?</h2>
+<p>Creating blog posts in raw HTML is pretty tedious so I think I'll work on a front end UI next. I should be able to create some javascript that uses S3 as a back end 'database'.   I'd like to know if anyone if reading this :) There's no way of sening me feedback other than by emailing me (peter@jonesie.net.nz).</p>
+
+</body>
+
+</html>
