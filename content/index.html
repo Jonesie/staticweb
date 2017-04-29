@@ -178,7 +178,7 @@ resource "aws_route53_record" "siteroot" {
   type    = "A"
 
   alias {
-    name                   = "s3-website-${var.aws_region}.amazonaws.com."
+    name                   = "${aws_s3_bucket.sitebucket.website_domain}"
     zone_id                = "${aws_s3_bucket.sitebucket.hosted_zone_id}"
     evaluate_target_health = false
   }
@@ -190,13 +190,11 @@ resource "aws_route53_record" "sitewww" {
   type    = "A"
 
   alias {
-    name                   = "s3-website-${var.aws_region}.amazonaws.com."
+    name                   = "${aws_s3_bucket.sitebucket.website_domain}"
     zone_id                = "${aws_s3_bucket.sitebucket.hosted_zone_id}"
     evaluate_target_health = false
   }
 }
-
-
     </pre>
     <pre class="filename">variables.tf</pre>
     <pre>
